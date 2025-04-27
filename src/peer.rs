@@ -123,21 +123,7 @@ impl Peer {
                         }
                     }
                 },
-                Err(_) => {
-                    let peer_addr_str = self.socket.local_addr().unwrap().to_string();
-                    let host_addr = self.host_addr.read().await;
-
-                    if let Some(host_addr) = &*host_addr {
-                        if &peer_addr_str != host_addr {
-                            println!("[Peer] wrong password. exiting...");
-                            std::process::exit(1);
-                        }
-                    }
-
-                    println!("[Peer] Kicking peer {} due to decryption failure.", addr);
-                    let mut peer_addrs = self.peer_addrs.write().await;
-                    peer_addrs.remove(&peer_addr_str);
-                }
+                Err(_) => {},
             }
         }
     }
