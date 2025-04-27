@@ -1,4 +1,5 @@
 use axum::{extract::State, routing::{get, post}, Json, Router};
+use reqwest::StatusCode;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use std::{collections::HashMap, net::SocketAddr, sync::{Arc, Mutex}};
@@ -30,6 +31,11 @@ struct CreateRoomRequest {
 struct JoinRoomRequest {
     room_id: String,
     player_name: String,
+}
+
+#[derive(Deserialize)]
+struct CleanupRequest {
+    room_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -121,12 +127,19 @@ async fn room_status(State(rooms): State<Rooms>, axum::extract::Path(room_id): a
     }
 }
 
+async fn cleanup_room(State(rooms): State<Rooms>, Json(payload): Json<CleanupRequest>) -> StatusCode {
+    let mut rooms = rooms.lock().unwrap();
+    rooms.remove(&payload.room_id);
+    StatusCode::OK
+}
+
 pub async fn run_main_server() {
     let rooms: Rooms = Arc::new(Mutex::new(HashMap::new()));
 
     let app = Router::new()
         .route("/create_room", post(create_room))
         .route("/join_room", post(join_room))
+        .route("/cleanup_room", post(cleanup_room))
         .route("/list_rooms", get(list_rooms))
         .route("/room_status/{room_id}", get(room_status))
         .with_state(rooms);

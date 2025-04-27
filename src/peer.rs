@@ -35,6 +35,7 @@ pub struct Peer {
     peer_addrs: Arc<RwLock<HashSet<String>>>,
     last_heartbeat: Arc<RwLock<Instant>>,
     pub token: String,
+    pub host_addr: Arc<RwLock<Option<String>>>,
 }
 
 impl Peer {
@@ -47,6 +48,7 @@ impl Peer {
             peer_addrs: Arc::new(RwLock::new(HashSet::new())),
             last_heartbeat: Arc::new(RwLock::new(Instant::now())),
             token,
+            host_addr: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -121,8 +123,20 @@ impl Peer {
                         }
                     }
                 },
-                Err(e) => {
-                    println!("decryption failed due to {:#?}", e);
+                Err(_) => {
+                    let peer_addr_str = self.socket.local_addr().unwrap().to_string();
+                    let host_addr = self.host_addr.read().await;
+
+                    if let Some(host_addr) = &*host_addr {
+                        if &peer_addr_str != host_addr {
+                            println!("[Peer] wrong password. exiting...");
+                            std::process::exit(1);
+                        }
+                    }
+
+                    println!("[Peer] Kicking peer {} due to decryption failure.", addr);
+                    let mut peer_addrs = self.peer_addrs.write().await;
+                    peer_addrs.remove(&peer_addr_str);
                 }
             }
         }
@@ -179,14 +193,23 @@ impl Peer {
                         let mut buf = [0u8; 2048];
                         if let Ok(n) = stream.read(&mut buf).await {
                             if n > 0 {
-                                if let Ok(peer_list) = serde_json::from_slice::<Vec<String>>(&buf[..n]) {
-                                    let mut peer_addrs = self.peer_addrs.write().await;
-                                    let old_peers: std::collections::HashSet<_> = peer_addrs.iter().cloned().collect();
-                                    for addr in peer_list {
-                                        peer_addrs.insert(addr);
-                                    }
-                                    if *peer_addrs != old_peers {
-                                        println!("[Refresher] updated peer list: {:?}", *peer_addrs);
+                                let response_text = String::from_utf8_lossy(&buf[..n]);
+                                if response_text == "\"disconnected\"" {
+                                    println!("[Peer] disconnected by server due to inactivity. exiting...");
+                                    std::process::exit(0);
+                                } else if response_text == "\"room_closed\"" {
+                                    println!("[Peer] room closed by server. exiting...");
+                                    std::process::exit(0);
+                                } else {
+                                    if let Ok(peer_list) = serde_json::from_str::<Vec<String>>(&response_text) {
+                                        let mut peer_addrs = self.peer_addrs.write().await;
+                                        let old_peers: std::collections::HashSet<_> = peer_addrs.iter().cloned().collect();
+                                        for addr in peer_list {
+                                            peer_addrs.insert(addr);
+                                        }
+                                        if *peer_addrs != old_peers {
+                                            println!("[Refresher] updated peer list: {:?}", *peer_addrs);
+                                        }
                                     }
                                 }
                             }
@@ -200,6 +223,11 @@ impl Peer {
     pub async fn send_hello(&self) {
         let hello_message = format!("HELLO {}", self.token.as_str());
         self.send_encrypted(hello_message.as_bytes()).await;
+    }
+
+    pub async fn set_host_addr(&self, addr: String) {
+        let mut host_addr = self.host_addr.write().await;
+        *host_addr = Some(addr);
     }
 }
 

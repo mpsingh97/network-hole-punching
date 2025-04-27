@@ -92,9 +92,17 @@ async fn main() {
 
     let peer = Arc::new(Peer::new(bind_addr, &password, token).await);
 
+    if is_host {
+        peer.set_host_addr(peer.socket.local_addr().unwrap().to_string()).await;
+    }
+
     let mut stream = TcpStream::connect(coordinator_addr).await.expect("failed to connect to coordinator");
     let my_addr = peer.socket.local_addr().unwrap().to_string();
-    let registration = format!("{},{}", room_id, my_addr);
+    let registration = if is_host {
+        format!("{},{},true", room_id, my_addr)
+    } else {
+        format!("{},{},false", room_id, my_addr)
+    };
     stream.write_all(registration.as_bytes()).await.expect("failed to send registration");
 
     let mut buf = [0u8; 1024];
@@ -104,8 +112,14 @@ async fn main() {
 
     if response != "waiting" {
         let peer_list: Vec<String> = serde_json::from_str(&response).unwrap_or_default();
-        for addr in peer_list {
+        for addr in peer_list.clone() {
             peer.add_peer(addr).await;
+        }
+        // i'm lazy, so I'm gonna assume first in the list is always host
+        if !is_host {
+            if let Some(first_peer) = peer_list.first() {
+                peer.set_host_addr(first_peer.clone()).await;
+            }
         }
     } else {
         println!("waiting for a peer to join...");
